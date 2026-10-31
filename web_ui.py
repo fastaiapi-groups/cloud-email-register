@@ -828,11 +828,17 @@ def api_scheduler_stop():
 
 @app.route("/api/log-stream")
 def api_log_stream():
-    def generate():
-        while True:
-            try: entry = _log_queue.get(timeout=30); yield f"data: {json.dumps(entry,ensure_ascii=False)}\n\n"
-            except queue.Empty: yield ": heartbeat\n\n"
-    return Response(generate(), mimetype="text/event-stream", headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})
+    # Waitress 的固定工作线程不能长期等待日志；旧页面断开后也可能继续占用线程。
+    # 每次只返回有限批次，EventSource 按现有重连逻辑继续读取，空队列立即结束。
+    frames = ["retry: 5000\n\n"]
+    for _ in range(100):
+        try:
+            entry = _log_queue.get_nowait()
+        except queue.Empty:
+            break
+        frames.append(f"data: {json.dumps(entry,ensure_ascii=False)}\n\n")
+    frames.append(": heartbeat\n\n")
+    return Response("".join(frames), mimetype="text/event-stream", headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})
 
 def main():
     import argparse, os, signal as _signal

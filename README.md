@@ -156,7 +156,7 @@ python icloud_hme.py delete --email xxx@icloud.com --cookies cookies.json
 
 管理员密码使用 Werkzeug scrypt 哈希；随机会话令牌与 API Key 仅保存 SHA-256 摘要。认证数据单独保存在被 Git 忽略的 `admin_auth.sqlite3`，邮箱备份导入不应覆盖此文件。备份生产环境时也应备份此认证数据库。
 
-会话默认自登录起固定 **30 天**，访问不会自动延期，重启服务仍然有效。可设置环境变量 `ADMIN_SESSION_DAYS`（1–365）调整新会话期限。退出登录立即撤销当前会话；修改或重置密码立即撤销全部管理员会话。后台写请求还需 `X-CSRF-Token`，从 `GET /api/auth/session` 获取，内置页面自动携带。实时事件流在会话失效后停止输出。
+会话默认自登录起固定 **30 天**，访问不会自动延期，重启服务仍然有效。可设置环境变量 `ADMIN_SESSION_DAYS`（1–365）调整新会话期限。退出登录立即撤销当前会话；修改或重置密码立即撤销全部管理员会话。后台写请求还需 `X-CSRF-Token`，从 `GET /api/auth/session` 获取，内置页面自动携带。实时事件流在会话失效后停止输出。日志接口 `/api/log-stream` 每次立即返回最多 100 条 SSE 事件，页面每 5 秒重连；空队列也立即返回，避免多个页面或已断开的连接占满 Waitress 工作线程。
 
 登录 Cookie 使用 HttpOnly、SameSite=Lax，默认要求 HTTPS（`AUTH_COOKIE_SECURE=1`）。生产通过 Caddy HTTPS 访问；本地 `start.sh` 和 Windows 启动器为回环 HTTP 设置 `AUTH_COOKIE_SECURE=0`。直接运行 Python 并使用本地 HTTP 时也需显式设置该变量，生产不得沿用此开发设置。
 

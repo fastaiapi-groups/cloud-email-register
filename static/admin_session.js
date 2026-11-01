@@ -22,6 +22,11 @@
       }
       const response = await send(input, init);
       if (response.status === 401) login();
+      if (method === 'POST' && /^\/api\/accounts\/[^/]+\/(validate|cookies)$/.test(url.pathname)
+          && [200, 400].includes(response.status)) {
+        document.getElementById('autoFrame')?.contentWindow?.postMessage(
+          {type: 'icloud-account-status-changed'}, location.origin);
+      }
       return response;
     }
     return send(input, init);

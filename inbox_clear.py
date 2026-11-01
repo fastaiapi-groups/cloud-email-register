@@ -3,7 +3,7 @@ from urllib.parse import urlsplit,parse_qs
 import requests
 from creation_jobs import CreationJobs
 
-API = 'https://api.fastaiapi.cloud'
+API = 'https://mail-api.fastaiapi.cloud'
 
 
 def clear_inbox(record, http=None):

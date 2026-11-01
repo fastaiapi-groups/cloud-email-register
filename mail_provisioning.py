@@ -10,7 +10,7 @@ from public_inbox import publish_inbox_link, load_config
 from icloud_hme import ICloudSessionExpired, ICloudMailSessionExpired, ICloudMailServiceUnavailable
 from registration_policy import MAX_SOURCE_ADDRESSES
 
-API_BASE = "https://api.fastaiapi.cloud"
+API_BASE = "https://mail-api.fastaiapi.cloud"
 WEBMAIL_BASE = "https://webmail.fastaiapi.cloud/"
 MAIL_DOMAIN = "fastaiapi.cloud"
 MAX_MAIL_RULES = MAX_SOURCE_ADDRESSES

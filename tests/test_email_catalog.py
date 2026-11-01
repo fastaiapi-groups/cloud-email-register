@@ -159,7 +159,7 @@ class ClearInboxTests(unittest.TestCase):
     def test_scope_checked_before_single_delete_and_no_apple_session_is_sent(self):
         self.http.request.side_effect=[self.response({'address':'sink@fastaiapi.cloud'}),self.response({'success':True})]
         self.assertTrue(clear_inbox(self.record,self.http))
-        self.assertEqual([x.args[:2] for x in self.http.request.call_args_list],[('GET','https://api.fastaiapi.cloud/api/settings'),('DELETE','https://api.fastaiapi.cloud/api/clear_inbox')])
+        self.assertEqual([x.args[:2] for x in self.http.request.call_args_list],[('GET','https://mail-api.fastaiapi.cloud/api/settings'),('DELETE','https://mail-api.fastaiapi.cloud/api/clear_inbox')])
         self.assertFalse(any('Cookie' in x.kwargs['headers'] for x in self.http.request.call_args_list))
 
     def test_wrong_identity_and_split_address_never_delete(self):

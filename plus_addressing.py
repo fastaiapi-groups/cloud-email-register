@@ -97,7 +97,7 @@ def inbox_subjects(record):
     token = parse_qs(parsed.query).get("jwt", [""])[0]
     if not token:
         raise ValueError("缺少收件凭据")
-    response = requests.get("https://api.fastaiapi.cloud/api/mails?limit=30&offset=0",
+    response = requests.get("https://mail-api.fastaiapi.cloud/api/mails?limit=30&offset=0",
                             headers={"Authorization": "Bearer " + token}, timeout=15,
                             allow_redirects=False, stream=True)
     with response:

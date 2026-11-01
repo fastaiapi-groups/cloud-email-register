@@ -48,6 +48,10 @@ class EmailDeleteJobs(CreationJobs):
                     status and status.group(1)=='421' and '短链接' not in message and '收件箱' not in message)
                 if expired and status:
                     message = 'iCloud 会话不可用（HTTP '+status.group(1)+'），请更新所属账号 Cookie 后重试删除'
+                if expired:
+                    update = getattr(self.manager, 'update_account', None)
+                    if update:
+                        update(account, status='error', session_requires_login=True, last_error=message)
                 self.storage.update_link(target, {'deletion_error':message})
                 return {'ok':False, 'email':target, 'error':message, 'session_expired':expired}
 

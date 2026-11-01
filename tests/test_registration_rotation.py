@@ -96,6 +96,25 @@ class RotationTest(unittest.TestCase):
         # 所有删除先完成，再进入新建阶段。
         self.assertEqual([action for action,_ in self.calls[:10]],['delete']*10)
 
+    def test_745_rotates_while_744_grows_only_to_threshold(self):
+        self.sources(5)
+        self.aliases['a'].extend({'email':f'external{i}@icloud.com','createdAt':1000}
+                                 for i in range(740))
+        job = self.run_job({**self.config, 'rotation_threshold': 745})
+        self.assertEqual((job['total_deleted'], job['total_created']), (5, 5))
+        self.calls.clear()
+        self.aliases['b'] = [{'email':f'external{i}@icloud.com'} for i in range(744)]
+        job = self.run_job({**self.config, 'rotation_threshold': 745}, ids=['b'])
+        self.assertEqual((job['total_deleted'], job['total_created']), (0, 1))
+
+    def test_750_cap_applies_even_when_rotation_disabled(self):
+        self.aliases['a'] = [{'email':f'external{i}@icloud.com'} for i in range(749)]
+        job = self.run_job({**self.config, 'rotation_enabled': False})
+        self.assertEqual(job['total_created'], 1)
+        self.aliases['a'].append({'email':'last@icloud.com'})
+        job = self.run_job({**self.config, 'rotation_enabled': False})
+        self.assertEqual(job['total_created'], 0)
+
     def test_single_delete_retries_once_and_other_sources_continue(self):
         self.sources()
         email='a0+old@icloud.com'
@@ -119,6 +138,25 @@ class RotationTest(unittest.TestCase):
         self.assertFalse(any(action=='delete' and email.startswith('a') for action,email in self.calls))
         self.assertEqual(job['total_created'],5)
 
+    def test_mail_rule_auth_failure_updates_shared_account_status_and_other_account_continues(self):
+        from icloud_hme import ICloudMailSessionExpired
+        original = self.manager.get_client
+        def get_client(account):
+            client = original(account)
+            if account == 'a':
+                def denied(**kwargs):
+                    raise ICloudMailSessionExpired('401')
+                client.list_aliases = denied
+            return client
+        self.manager.get_client = get_client
+        self.manager.update_account = lambda account, **values: self.accounts[account].update(values)
+        job = self.run_job(ids=['a','b'])
+        self.assertEqual(self.accounts['a']['status'], 'error')
+        self.assertTrue(self.accounts['a']['session_requires_login'])
+        self.assertIn('邮件规则', self.accounts['a']['last_error'])
+        self.assertEqual(job['total_created'], 5)
+        self.assertIn('邮件规则', next(e['error'] for e in job['events'] if e['action']=='account_error'))
+
     def test_failed_source_creation_and_split_do_not_abort_following_items(self):
         self.sources(1)
         original=self.manager.create_aliases_for_account
@@ -129,7 +167,7 @@ class RotationTest(unittest.TestCase):
             return [{'ok':False,'error':'one failed'}] if attempts==1 else original(*args)
         self.manager.create_aliases_for_account=create
         with patch('registration_rotation.PlusCreationJobs.create_item',return_value={'ok':False,'error':'split failed'}):
-            job=self.run_job()
+            job=self.run_job({**self.config, 'rotation_threshold': 10})
         self.assertEqual(attempts,5)
         self.assertEqual(job['total_created'],4)
         self.assertEqual(job['total_errors'],5)
@@ -220,7 +258,7 @@ class RotationTest(unittest.TestCase):
     def test_invalid_rotation_config_does_not_persist(self):
         auto=AutoRegistration(self.jobs,self.manager,Path(self.tmp.name)/'state.json')
         before=copy.deepcopy(auto.config)
-        for data in [{'rotation_threshold':0},{'rotation_count':True},{'delete_retries':4},
+        for data in [{'rotation_threshold':0},{'rotation_threshold':751},{'rotation_count':True},{'delete_retries':4},
                      {'split_per_source':-1},{'hourly_create_limit':0},{'quota_window_minutes':0}]:
             with self.assertRaises(ValueError):
                 auto.configure(data)

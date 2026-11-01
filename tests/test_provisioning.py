@@ -55,14 +55,28 @@ class FakeDomain:
 
 
 class ProvisioningTest(unittest.TestCase):
+    def test_manual_create_stops_at_750_before_reserving_alias(self):
+        import account_manager as module
+        manager = module.AccountManager()
+        manager.accounts = {'a1': {'name': 'test'}}
+        client = Mock()
+        client.list_aliases.return_value = [{}] * 750
+        manager.get_client = Mock(return_value=client)
+        with patch('mail_provisioning.MailProvisioner'):
+            result = manager.create_aliases_for_account('a1', count=5)
+        client.create_alias.assert_not_called()
+        self.assertFalse(result[0]['ok'])
+        self.assertIn('750', result[0]['error'])
+
     def test_capacity_stops_before_reserving_alias(self):
         import account_manager as module
         manager = module.AccountManager()
         manager.accounts = {"a1": {"name": "test"}}
         client = Mock()
+        client.list_aliases.return_value = []
         manager.get_client = Mock(return_value=client)
         with patch("mail_provisioning.MailProvisioner") as factory:
-            factory.return_value.check_rule_capacity.side_effect = RuntimeError("500 条上限")
+            factory.return_value.check_rule_capacity.side_effect = RuntimeError("750 条上限")
             result = manager.create_aliases_for_account("a1")
         client.create_alias.assert_not_called()
         self.assertFalse(result[0]["alias_created"])
@@ -71,10 +85,10 @@ class ProvisioningTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             apple, domain = FakeApple(), FakeDomain()
             apple.rules = [{"ruleId": str(i), "prefix": "TO", "body": f"{i}@icloud.com",
-                            "action": "FRWD", "target": domain.address} for i in range(500)]
+                            "action": "FRWD", "target": domain.address} for i in range(750)]
             provisioner = MailProvisioner(apple, Path(folder) / 'links.json', domain, publisher=lambda r: r)
             provisioner.prepare()
-            with self.assertRaisesRegex(RuntimeError, "500 条上限"):
+            with self.assertRaisesRegex(RuntimeError, "750 条项目上限"):
                 provisioner.provision("new@icloud.com", "a1")
             self.assertEqual(domain.creates, 0)
             self.assertEqual(provisioner.ensure_rule("1@icloud.com", domain.address), "1")
@@ -87,8 +101,21 @@ class ProvisioningTest(unittest.TestCase):
             if method == "POST" else original(method, url, **kw))
         provisioner = MailProvisioner(apple, publisher=lambda r: r)
         provisioner.prepare()
-        with self.assertRaisesRegex(RuntimeError, "500 条上限"):
+        with self.assertRaisesRegex(RuntimeError, "Apple 返回 RULE_MAXIMUM_REACHED"):
             provisioner.ensure_rule("new@icloud.com", "dest@fastaiapi.cloud")
+
+    def test_mail_auth_error_is_distinct_and_reuses_validated_session(self):
+        from icloud_hme import ICloudSessionExpired, ICloudMailSessionExpired
+        from plus_addressing import safe_error
+        apple = Mock()
+        apple.get_account_info.return_value = {'dsid': '123'}
+        apple._request.side_effect = ICloudSessionExpired('HTTP 401: private-upstream-body')
+        provisioner = MailProvisioner(apple, publisher=lambda r: r)
+        with self.assertRaises(ICloudMailSessionExpired) as caught:
+            provisioner.prepare_rules(validation={'webservices': {'mcc': {'url': 'https://p1-mcc.icloud.com'}}})
+        apple.validate_session.assert_not_called()
+        self.assertIn('邮件规则', safe_error(caught.exception))
+        self.assertNotIn('private-upstream-body', safe_error(caught.exception))
 
     def test_new_account_sets_forward_target_after_first_alias_exists(self):
         apple = FakeApple()
@@ -213,6 +240,7 @@ class ProvisioningTest(unittest.TestCase):
                 manager = module.AccountManager()
                 manager.accounts = {"account-1": {"id": "account-1", "name": "test", "cookies": {}}}
                 client = Mock()
+                client.list_aliases.return_value = []
                 client.create_alias.return_value = {"email": "one@icloud.com"}
                 manager.get_client = Mock(return_value=client)
                 with patch("mail_provisioning.MailProvisioner") as factory:

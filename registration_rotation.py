@@ -16,7 +16,7 @@ from plus_addressing import safe_error
 from auto_plus import PlusCreationJobs
 
 
-from registration_policy import ROTATION_DEFAULTS
+from registration_policy import ROTATION_DEFAULTS, MAX_SOURCE_ADDRESSES
 
 
 class RegistrationJobs(CreationJobs):
@@ -188,6 +188,9 @@ class RegistrationJobs(CreationJobs):
             return
         client = self.manager.get_client(account)
         aliases = client.list_aliases(strict=True)
+        source_total = len(aliases)
+        if config['rotation_enabled'] and source_total < config['rotation_threshold']:
+            budget = min(budget, config['rotation_threshold'] - source_total)
         deleter = EmailDeleteJobs(self.manager)
         deleter.records, deleter.contexts, deleter.cleanup_inboxes = {}, {}, True
         if config['rotation_enabled'] and len(aliases) >= config['rotation_threshold']:
@@ -229,6 +232,12 @@ class RegistrationJobs(CreationJobs):
                 released += bool(result.get('ok'))
             # 只补建完整释放的名额，删除失败不会导致超量新建。
             budget = min(budget, released)
+            source_total -= released
+        budget = min(budget, max(0, MAX_SOURCE_ADDRESSES - source_total))
+        if not budget:
+            self._event(job_id, account, 'skip', {'ok': False, 'skipped': True,
+                'error': f'本主账号已达 {MAX_SOURCE_ADDRESSES} 个源地址上限，本轮不创建'})
+            return
         splitter = PlusCreationJobs(self.manager)
         for index in range(budget):
             if cancel.is_set() or self._expired(account):
@@ -275,11 +284,17 @@ class RegistrationJobs(CreationJobs):
                         self._log_quota(job_id, account, '执行前')
                         try:
                             self._account(job_id, account, cancel)
+                        except ICloudSessionExpired as error:
+                            update = getattr(self.manager, 'update_account', None)
+                            if update:
+                                update(account, status='error', session_requires_login=True,
+                                       last_error=self._error(error))
+                            raise
                         finally:
                             self._log_quota(job_id, account, '本账号结束时')
                 except Exception as error:
                     self._event(job_id, account, 'account_error', {'ok': False,
-                        'error': '主账号 Cookie 失效，跳过该账号' if self._expired(account, error) else self._error(error)})
+                        'error': self._error(error)})
             with self._lock:
                 job = self._jobs[job_id]
                 job['status'] = 'cancelled' if cancel.is_set() else 'completed'

@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 from storage import Storage, database_for
-from registration_policy import ROTATION_DEFAULTS
+from registration_policy import ROTATION_DEFAULTS, MAX_SOURCE_ADDRESSES
 
 DEFAULTS = {"enabled": False, "account_ids": [], "count": 5, "interval_mode": "random",
             "interval_minutes": 60, "min_minutes": 60, "max_minutes": 90,
@@ -82,7 +82,7 @@ class AutoRegistration:
             if 'rotation_enabled' in self.defaults:
                 if type(config['rotation_enabled']) is not bool:
                     raise ValueError('容量轮换开关必须为布尔值')
-                for key, low, high in (('rotation_threshold', 1, 10000), ('rotation_count', 1, 20),
+                for key, low, high in (('rotation_threshold', 1, MAX_SOURCE_ADDRESSES), ('rotation_count', 1, 20),
                                        ('delete_retries', 0, 3), ('split_per_source', 0, 20),
                                        ('hourly_create_limit', 1, 50), ('quota_window_minutes', 1, 1440)):
                     if type(config[key]) is not int or not low <= config[key] <= high:

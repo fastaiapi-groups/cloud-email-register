@@ -11,7 +11,7 @@ from creation_jobs import CreationJobs
 class AccountSessionsTest(unittest.TestCase):
     def test_session_replacement_checks_identity_and_preserves_other_account(self):
         manager = module.AccountManager()
-        with patch('icloud_hme.ICloudHME') as factory:
+        with patch('icloud_hme.ICloudHME') as factory, patch('mail_provisioning.MailProvisioner'):
             client = factory.return_value
             client.cookies = {'token': 'rotated'}
             client.get_account_info.return_value = {'appleId': 'wrong@example.com'}
@@ -24,6 +24,42 @@ class AccountSessionsTest(unittest.TestCase):
         self.assertEqual(reloaded.accounts['acc_a']['cookies'], {'token': 'rotated'})
         self.assertEqual(reloaded.accounts['acc_b'], self.records['acc_b'])
         self.assertFalse(reloaded.accounts['acc_a']['session_requires_login'])
+
+    def test_dashboard_and_keepalive_both_require_mail_rule_access(self):
+        from icloud_hme import ICloudMailSessionExpired
+        manager = module.AccountManager()
+        validation = {'webservices': {'mcc': {'url': 'https://p1-mcc.icloud.com'}}}
+        client = Mock(cookies={'token': 'A'})
+        client.validate_session.return_value = validation
+        client.get_account_info.return_value = {'appleId': 'a@example.com'}
+        client.list_aliases.return_value = []
+        with patch.object(manager, 'get_client', return_value=client), \
+                patch('mail_provisioning.MailProvisioner') as provisioner:
+            provisioner.return_value.prepare_rules.side_effect = ICloudMailSessionExpired('401')
+            for validate in (manager.validate_account, manager.keep_session_alive):
+                result = validate('acc_a')
+                self.assertEqual(result['status'], 'error')
+                self.assertTrue(result['session_requires_login'])
+                self.assertIn('邮件规则', result['last_error'])
+                self.assertIn('HTTP 401', result['last_error'])
+            provisioner.return_value.prepare_rules.side_effect = None
+            for validate in (manager.validate_account, manager.keep_session_alive):
+                result = validate('acc_a')
+                self.assertEqual(result['status'], 'active')
+                self.assertFalse(result['session_requires_login'])
+            self.assertTrue(all(call.kwargs == {'validation': validation}
+                                for call in provisioner.return_value.prepare_rules.call_args_list))
+
+    def test_new_cookie_without_mail_access_cannot_be_reported_as_valid(self):
+        from icloud_hme import ICloudMailSessionExpired
+        manager = module.AccountManager()
+        with patch('icloud_hme.ICloudHME') as factory, \
+                patch('mail_provisioning.MailProvisioner') as provisioner:
+            factory.return_value.get_account_info.return_value = {'appleId': 'a@example.com'}
+            provisioner.return_value.prepare_rules.side_effect = ICloudMailSessionExpired('401')
+            with self.assertRaises(ICloudMailSessionExpired):
+                manager.replace_session('acc_a', 'token=new')
+        self.assertEqual(manager.accounts['acc_a']['cookies'], {'token': 'A'})
 
     def test_keepalive_marks_relogin_without_replaying_expired_cookie(self):
         from icloud_hme import ICloudSessionExpired

@@ -120,7 +120,7 @@ class AccountManager:
 
         try:
             client = ICloudHME(cookies, host=host, verbose=False)
-            client.validate_session()
+            validation = client.validate_session()
             info = client.get_account_info()
             if info:
                 account["real_email"] = (
@@ -129,20 +129,21 @@ class AccountManager:
                 )
                 account["icloud_email"] = self._derive_icloud_email(info)
 
-            try:
-                aliases = client.list_aliases()
-                account["alias_total"] = len(aliases)
-                account["alias_active"] = sum(
-                    1 for a in aliases if a.get("active")
-                )
-            except Exception:
-                pass
+            aliases = client.list_aliases(strict=True)
+            account["alias_total"] = len(aliases)
+            account["alias_active"] = sum(1 for a in aliases if a.get("active"))
 
+            from mail_provisioning import MailProvisioner
+            MailProvisioner(client).prepare_rules(validation=validation)
+            account["cookies"] = dict(client.cookies)
+            account["session_requires_login"] = False
             account["last_validated"] = datetime.now().isoformat()
             account["last_error"] = None
         except Exception as e:
+            from icloud_hme import ICloudSessionExpired
             account["status"] = "error"
             account["last_error"] = str(e)[:300]
+            account["session_requires_login"] = isinstance(e, ICloudSessionExpired)
 
         self.accounts[acc_id] = account
         self._save()
@@ -204,7 +205,7 @@ class AccountManager:
 
         try:
             client = self.get_client(acc_id, verbose=False)
-            client.validate_session()
+            validation = client.validate_session()
             info = client.get_account_info()
             if info:
                 if account.get("real_email") and info.get("appleId", "").lower() != account["real_email"].lower():
@@ -220,11 +221,13 @@ class AccountManager:
                 if not is_icloud:
                     account["icloud_email"] = self._derive_icloud_email(info)
 
-            aliases = client.list_aliases()
+            aliases = client.list_aliases(strict=True)
             account["alias_total"] = len(aliases)
             account["alias_active"] = sum(
                 1 for a in aliases if a.get("active")
             )
+            from mail_provisioning import MailProvisioner
+            MailProvisioner(client).prepare_rules(validation=validation)
             account["status"] = "active"
             account["last_validated"] = datetime.now().isoformat()
             account["last_error"] = None
@@ -240,15 +243,18 @@ class AccountManager:
 
     def keep_session_alive(self, acc_id: str) -> Dict:
         """只校验会话并保存轮换 Cookie，不创建邮箱或启动业务任务。"""
-        from icloud_hme import ICloudSessionExpired
+        from icloud_hme import ICloudSessionExpired, ICloudMailSessionExpired
         with self._workflow_lock(acc_id):
             client = self.get_client(acc_id, verbose=False)
             try:
-                client.validate_session(max_attempts=1)
+                validation = client.validate_session(max_attempts=1)
                 info = client.get_account_info() or {}
                 account = self.accounts[acc_id]
                 if not info.get('appleId') or info['appleId'].lower() != account.get('real_email', '').lower():
                     raise ICloudSessionExpired('Apple 会话身份不匹配，请更新该账号 Cookie')
+                from mail_provisioning import MailProvisioner
+                client.list_aliases(strict=True)
+                MailProvisioner(client).prepare_rules(validation=validation)
                 values = dict(status='active', last_error=None, session_requires_login=False,
                               session_checked_at=datetime.now().isoformat(),
                               last_validated=datetime.now().isoformat())
@@ -257,7 +263,8 @@ class AccountManager:
                 expired = isinstance(error, ICloudSessionExpired)
                 values = dict(status='error', session_requires_login=expired,
                               session_checked_at=datetime.now().isoformat(),
-                              last_error='Apple 会话失效，请重新登录 iCloud 并更新 Cookie' if expired
+                              last_error=str(error) if isinstance(error, ICloudMailSessionExpired)
+                              else 'Apple 会话失效，请重新登录 iCloud 并更新 Cookie' if expired
                               else '会话保活暂时失败，将自动重试')
             with self._lock:
                 account = self.accounts.get(acc_id)
@@ -275,10 +282,13 @@ class AccountManager:
             if not account:
                 raise KeyError('账号不存在')
             client = ICloudHME(self.parse_cookie_input(raw), host=account.get('host', 'icloud.com'), verbose=False)
-            client.validate_session(max_attempts=1)
+            validation = client.validate_session(max_attempts=1)
             info = client.get_account_info() or {}
             if not info.get('appleId') or info['appleId'].lower() != account.get('real_email', '').lower():
                 raise ValueError('Cookie 所属账号不匹配，未修改原账号')
+            from mail_provisioning import MailProvisioner
+            client.list_aliases(strict=True)
+            MailProvisioner(client).prepare_rules(validation=validation)
             return self.update_account(acc_id, cookies=client.cookies, status='active', last_error=None,
                                        session_requires_login=False,
                                        last_validated=datetime.now().isoformat())
@@ -499,10 +509,14 @@ class AccountManager:
             client = self.get_client(acc_id, verbose=False)
             provisioner = MailProvisioner(client)
             provisioner.prepare()
+            from registration_policy import MAX_SOURCE_ADDRESSES
+            source_total = len(client.list_aliases(strict=True))
             results = []
             for i in range(count):
                 email = None
                 try:
+                    if source_total >= MAX_SOURCE_ADDRESSES:
+                        raise RuntimeError(f'本主账号已达 {MAX_SOURCE_ADDRESSES} 个源地址上限')
                     # A paid alias must not be reserved when it cannot be routed.
                     provisioner.check_rule_capacity()
                     alias_label = label or f"{account.get('name', acc_id)} {datetime.now().strftime('%m%d%H%M')}-{i + 1}"
@@ -510,6 +524,7 @@ class AccountManager:
                     email = result.get("email", "")
                     if not email:
                         raise RuntimeError("iCloud 未返回有效邮箱")
+                    source_total += 1
                     # Persist the alias before any subsequent network operation.
                     with self._lock:
                         self.storage.add_email(email, acc_id)
@@ -521,8 +536,14 @@ class AccountManager:
                                     "alias_created": True, "inbox_url": record["inbox_url"],
                                     "line": email + "----" + record["inbox_url"]})
                 except Exception as error:
+                    from icloud_hme import ICloudSessionExpired
+                    expired = isinstance(error, ICloudSessionExpired)
+                    if expired:
+                        account.update(status='error', session_requires_login=True, last_error=str(error)[:250])
+                        self._save()
                     results.append({"email": email, "account_id": acc_id, "ok": False,
-                                    "alias_created": bool(email), "error": str(error)[:250]})
+                                    "alias_created": bool(email), "error": str(error)[:250],
+                                    "session_expired": expired})
                     # Stop on a partial setup failure so a batch cannot leave many orphan aliases.
                     break
             return results

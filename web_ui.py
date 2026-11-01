@@ -8,7 +8,7 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path: sys.path.insert(0, str(HERE))
 
 from flask import Flask, Response, request, jsonify, render_template_string
-from icloud_hme import ICloudHME, extract_chrome_cookies
+from icloud_hme import ICloudHME, ICloudMailSessionExpired, extract_chrome_cookies
 from account_manager import AccountManager
 from inbox_links import load_links, export_lines, is_ready
 from creation_jobs import CreationJobs
@@ -344,6 +344,8 @@ def api_replace_account_cookies(acc_id):
         return jsonify(ok=False, error='账号不存在'), 404
     except ValueError:
         return jsonify(ok=False, error='Cookie 格式错误或所属账号不匹配，未修改原账号'), 400
+    except ICloudMailSessionExpired as error:
+        return jsonify(ok=False, error=str(error)), 400
     except Exception:
         return jsonify(ok=False, error='新会话校验失败，请重新登录 iCloud 后导出 Cookie'), 400
 

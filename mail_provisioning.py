@@ -7,11 +7,13 @@ import requests
 
 from inbox_links import REGISTRY, is_ready, load_links, save_link, update_link
 from public_inbox import publish_inbox_link, load_config
+from icloud_hme import ICloudSessionExpired, ICloudMailSessionExpired
+from registration_policy import MAX_SOURCE_ADDRESSES
 
 API_BASE = "https://api.fastaiapi.cloud"
 WEBMAIL_BASE = "https://webmail.fastaiapi.cloud/"
 MAIL_DOMAIN = "fastaiapi.cloud"
-MAX_MAIL_RULES = 500
+MAX_MAIL_RULES = MAX_SOURCE_ADDRESSES
 
 
 class MailProvisioner:
@@ -29,9 +31,10 @@ class MailProvisioner:
         self.prepare_rules()
         self.ensure_forward_target(allow_uninitialized=True)
 
-    def prepare_rules(self):
+    def prepare_rules(self, validation=None):
         """Authenticate rule access without changing forwarding settings."""
-        validation = self.client.validate_session()
+        if validation is None:
+            validation = self.client.validate_session()
         mcc = validation.get("webservices", {}).get("mcc", {}).get("url", "")
         host = urlparse(mcc).hostname or ""
         if not host.endswith((".icloud.com", ".icloud.com.cn")):
@@ -66,7 +69,11 @@ class MailProvisioner:
                 raise RuntimeError("隐藏地址转发目标未确认，已停止创建")
 
     def list_rules(self):
-        data = self.client._request("GET", self.rules_url, max_attempts=1)
+        try:
+            data = self.client._request("GET", self.rules_url, max_attempts=1)
+        except ICloudSessionExpired as error:
+            status = re.search(r'HTTP (401|403|421|450)\b', str(error))
+            raise ICloudMailSessionExpired(status.group(1) if status else '401') from None
         if data.get("requestStatus", "SUCCESS") != "SUCCESS" or not isinstance(data.get("mailRules"), list):
             raise RuntimeError("读取 iCloud 转发规则失败")
         return data["mailRules"]
@@ -77,7 +84,7 @@ class MailProvisioner:
         if alias and any(self.matching_rule(r, alias, destination or "") for r in rules):
             return
         if len(rules) >= MAX_MAIL_RULES:
-            raise RuntimeError("iCloud 转发规则已达 500 条上限；请先释放规则容量，再一键补齐收件地址；未删除已有规则")
+            raise RuntimeError(f"iCloud 转发规则已达 {MAX_MAIL_RULES} 条项目上限；请先释放规则容量，再一键补齐收件地址；未删除已有规则")
 
     def _domain_request(self, method, path, *, token=None, data=None):
         headers = {"Authorization": f"Bearer {token}"} if token else {}
@@ -114,7 +121,7 @@ class MailProvisioner:
                                  json_data={"data": [{"operation": "CREATE", "data": rule}]}, max_attempts=1)
             operations = response.get("data", [])
             if any(item.get("data", {}).get("errorCode") == "RULE_MAXIMUM_REACHED" for item in operations):
-                raise RuntimeError("iCloud 转发规则已达 500 条上限；请释放容量后补齐")
+                raise RuntimeError("iCloud 转发规则容量已满（Apple 返回 RULE_MAXIMUM_REACHED）；请释放容量后补齐")
             if response.get("requestStatus") == "FAILURE" or any(item.get("status") == "FAILURE" for item in operations):
                 raise RuntimeError("iCloud 拒绝创建转发规则，已保存进度供补齐")
         except Exception as error:

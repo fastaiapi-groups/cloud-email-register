@@ -222,6 +222,13 @@ class ICloudSessionExpired(RuntimeError):
     """Apple 已拒绝会话；保活不能替代重新登录及双重认证。"""
 
 
+class ICloudMailSessionExpired(ICloudSessionExpired):
+    """隐藏邮箱可访问时，邮件规则仍可能需要单独更新登录会话。"""
+    def __init__(self, status):
+        self.status = status
+        super().__init__(f'Apple 邮件规则会话未通过验证（HTTP {status}），请在原浏览器打开 iCloud 邮件并更新该账号完整 Cookie')
+
+
 class ICloudHME:
     """iCloud Hide My Email 客户端"""
 

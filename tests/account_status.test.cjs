@@ -9,7 +9,7 @@ function panel() {
   const row = {querySelector:selector=>selector==='input'?input:status};
   const fields = {};
   let now = 120000;
-  let account = {id:'a',status:'error',last_error:'Apple 邮件规则会话未通过验证（HTTP 401）'};
+  let account = {id:'a',status:'error',session_requires_login:true,last_error:'Apple 邮件规则会话未通过验证（HTTP 401）'};
   let offline = false;
   const calls = [];
   const context = vm.createContext({
@@ -34,6 +34,7 @@ function panel() {
   return {context,input,status,calls,
     advance:(milliseconds=60001)=>{now+=milliseconds},
     active:()=>{account={id:'a',status:'active'}},
+    serviceError:()=>{account={id:'a',status:'error',session_requires_login:false,last_error:'Apple 邮件规则服务暂时异常（INTERNAL_SERVER_ERROR）'}},
     offline:()=>{offline=true}};
 }
 
@@ -102,7 +103,13 @@ test('管理员请求助手在账号校验结束后通知注册页，普通请�
   responseStatus=400;
   await context.window.fetch('/api/accounts/a/cookies',{method:'POST'});
   assert.equal(messages.length,2);
+  responseStatus=503;
+  await context.window.fetch('/api/accounts/a/cookies',{method:'POST'});
+  assert.equal(messages.length,3);
   await context.window.fetch('/api/auto-registration',{method:'POST'});
   await context.window.fetch('https://other.example/api/accounts/a/validate',{method:'POST'});
-  assert.equal(messages.length,2);
+  assert.equal(messages.length,3);
 });
+
+
+test('Apple 邮件服务内部错误显示服务异常，不要求重新登录',async()=>{const p=panel();p.serviceError();await p.context.refresh();assert.equal(p.status.textContent,'邮件规则服务异常');assert.match(p.status.title,/INTERNAL_SERVER_ERROR/);assert.equal(p.input.checked,true)});

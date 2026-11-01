@@ -7,6 +7,27 @@ from session_maintenance import SessionMaintenance
 
 
 class SessionMaintenanceTest(unittest.TestCase):
+    def test_mail_internal_error_is_not_treated_as_revoked_main_session(self):
+        from mail_provisioning import MailProvisioner
+        from icloud_hme import ICloudMailServiceUnavailable
+        from plus_addressing import safe_error
+        client = ICloudHME({}, verbose=False)
+        response = requests.Response()
+        response.status_code = 401
+        response._content = b'{"errorCode":"INTERNAL_SERVER_ERROR","errorDescription":"private-response"}'
+        client.session.request = Mock(return_value=response)
+        provisioner = MailProvisioner(client, publisher=lambda r:r)
+        provisioner.rules_url = 'https://p1-mcc.icloud.com/cc/mail/v1/account/123/rules/'
+        with self.assertRaises(ICloudMailServiceUnavailable) as caught:
+            provisioner.list_rules()
+        self.assertNotIsInstance(caught.exception, ICloudSessionExpired)
+        self.assertIn('INTERNAL_SERVER_ERROR', safe_error(caught.exception))
+        self.assertNotIn('private-response', safe_error(caught.exception))
+        self.assertEqual(client.session.request.call_count, 1)
+        # 同样的状态出现在主登录接口时仍要求重新登录，不放宽主会话鉴权。
+        with self.assertRaises(ICloudSessionExpired):
+            client.validate_session(max_attempts=1)
+
     def test_cookie_rotation_replaces_duplicate_and_persists_before_next_request(self):
         saved = Mock()
         client = ICloudHME({'token': 'old'}, on_cookie_update=saved, verbose=False)

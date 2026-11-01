@@ -7,7 +7,7 @@ import requests
 
 from inbox_links import REGISTRY, is_ready, load_links, save_link, update_link
 from public_inbox import publish_inbox_link, load_config
-from icloud_hme import ICloudSessionExpired, ICloudMailSessionExpired
+from icloud_hme import ICloudSessionExpired, ICloudMailSessionExpired, ICloudMailServiceUnavailable
 from registration_policy import MAX_SOURCE_ADDRESSES
 
 API_BASE = "https://api.fastaiapi.cloud"
@@ -73,6 +73,8 @@ class MailProvisioner:
             data = self.client._request("GET", self.rules_url, max_attempts=1)
         except ICloudSessionExpired as error:
             status = re.search(r'HTTP (401|403|421|450)\b', str(error))
+            if error.error_code == 'INTERNAL_SERVER_ERROR':
+                raise ICloudMailServiceUnavailable(error.http_status or (status.group(1) if status else '401')) from None
             raise ICloudMailSessionExpired(status.group(1) if status else '401') from None
         if data.get("requestStatus", "SUCCESS") != "SUCCESS" or not isinstance(data.get("mailRules"), list):
             raise RuntimeError("读取 iCloud 转发规则失败")

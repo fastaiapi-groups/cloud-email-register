@@ -35,6 +35,13 @@ class AdminAuthTest(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertNotIn('private', response.text)
             self.assertNotIn('cookies', response.json)
+            replace.return_value = {'status':'error','last_error':'Apple 邮件规则服务暂时异常',
+                                    'cookies':{'token':'private'}}
+            response = self.client.post(path,json={'cookie_input':'token=private'},
+                                        headers={'X-CSRF-Token':csrf})
+            self.assertEqual(response.status_code,503)
+            self.assertTrue(response.json['session_saved'])
+            self.assertNotIn('private',response.text)
             replace.side_effect = RuntimeError('private-session-response')
             response = self.client.post(path, json={'cookie_input': 'token=private'},
                                         headers={'X-CSRF-Token': csrf})

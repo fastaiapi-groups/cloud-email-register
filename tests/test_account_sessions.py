@@ -61,6 +61,28 @@ class AccountSessionsTest(unittest.TestCase):
                 manager.replace_session('acc_a', 'token=new')
         self.assertEqual(manager.accounts['acc_a']['cookies'], {'token': 'A'})
 
+    def test_verified_new_cookie_is_saved_during_mail_internal_error_without_relogin_flag(self):
+        from icloud_hme import ICloudMailServiceUnavailable
+        manager = module.AccountManager()
+        with patch('icloud_hme.ICloudHME') as factory, \
+                patch('mail_provisioning.MailProvisioner') as provisioner:
+            client = factory.return_value
+            client.cookies = {'token': 'rotated-valid'}
+            client.get_account_info.return_value = {'appleId': 'a@example.com'}
+            client.list_aliases.return_value = []
+            provisioner.return_value.prepare_rules.side_effect = ICloudMailServiceUnavailable(401)
+            result = manager.replace_session('acc_a', 'token=new')
+            self.assertEqual(result['cookies'], {'token':'rotated-valid'})
+            self.assertEqual(result['status'], 'error')
+            self.assertFalse(result['session_requires_login'])
+            with patch.object(manager, 'get_client', return_value=client):
+                result = manager.keep_session_alive('acc_a')
+            self.assertFalse(result['session_requires_login'])
+            self.assertIn('INTERNAL_SERVER_ERROR',result['last_error'])
+        reloaded = module.AccountManager()
+        self.assertEqual(reloaded.accounts['acc_a']['cookies'], {'token':'rotated-valid'})
+        self.assertEqual(reloaded.accounts['acc_b'], self.records['acc_b'])
+
     def test_keepalive_marks_relogin_without_replaying_expired_cookie(self):
         from icloud_hme import ICloudSessionExpired
         manager = module.AccountManager()

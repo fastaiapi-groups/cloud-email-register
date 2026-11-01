@@ -220,6 +220,10 @@ def _decrypt_chrome_value(encrypted_value: bytes, key: bytes) -> Optional[str]:
 
 class ICloudSessionExpired(RuntimeError):
     """Apple 已拒绝会话；保活不能替代重新登录及双重认证。"""
+    def __init__(self, message, *, http_status=None, error_code=None):
+        super().__init__(message)
+        self.http_status = http_status
+        self.error_code = error_code
 
 
 class ICloudMailSessionExpired(ICloudSessionExpired):
@@ -227,6 +231,12 @@ class ICloudMailSessionExpired(ICloudSessionExpired):
     def __init__(self, status):
         self.status = status
         super().__init__(f'Apple 邮件规则会话未通过验证（HTTP {status}），请在原浏览器打开 iCloud 邮件并更新该账号完整 Cookie')
+
+
+class ICloudMailServiceUnavailable(RuntimeError):
+    """MCC 明确返回内部错误，不据此撤销已经验证的主会话。"""
+    def __init__(self, status):
+        super().__init__(f'Apple 邮件规则服务暂时异常（HTTP {status}，INTERNAL_SERVER_ERROR）；稍后自动重试')
 
 
 class ICloudHME:
@@ -310,7 +320,15 @@ class ICloudHME:
                     self.on_cookie_update(updates)
                 if not resp.ok:
                     if resp.status_code in (401, 403, 421, 450):
-                        raise ICloudSessionExpired(f'HTTP {resp.status_code}: Apple 会话已失效，请重新登录 iCloud 并更新 Cookie')
+                        error_code = None
+                        try:
+                            payload = resp.json()
+                            if isinstance(payload, dict) and payload.get('errorCode') == 'INTERNAL_SERVER_ERROR':
+                                error_code = 'INTERNAL_SERVER_ERROR'
+                        except ValueError:
+                            pass
+                        raise ICloudSessionExpired(f'HTTP {resp.status_code}: Apple 会话已失效，请重新登录 iCloud 并更新 Cookie',
+                                                   http_status=resp.status_code, error_code=error_code)
                     last_err = RuntimeError(f"HTTP {resp.status_code}: {resp.text[:200]}")
                     if attempt < max_attempts:
                         time.sleep(RETRY_DELAYS[min(attempt - 1, len(RETRY_DELAYS) - 1)])

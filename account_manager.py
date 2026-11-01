@@ -243,7 +243,7 @@ class AccountManager:
 
     def keep_session_alive(self, acc_id: str) -> Dict:
         """只校验会话并保存轮换 Cookie，不创建邮箱或启动业务任务。"""
-        from icloud_hme import ICloudSessionExpired, ICloudMailSessionExpired
+        from icloud_hme import ICloudSessionExpired, ICloudMailSessionExpired, ICloudMailServiceUnavailable
         with self._workflow_lock(acc_id):
             client = self.get_client(acc_id, verbose=False)
             try:
@@ -263,7 +263,7 @@ class AccountManager:
                 expired = isinstance(error, ICloudSessionExpired)
                 values = dict(status='error', session_requires_login=expired,
                               session_checked_at=datetime.now().isoformat(),
-                              last_error=str(error) if isinstance(error, ICloudMailSessionExpired)
+                              last_error=str(error) if isinstance(error, (ICloudMailSessionExpired, ICloudMailServiceUnavailable))
                               else 'Apple 会话失效，请重新登录 iCloud 并更新 Cookie' if expired
                               else '会话保活暂时失败，将自动重试')
             with self._lock:
@@ -276,7 +276,7 @@ class AccountManager:
 
     def replace_session(self, acc_id: str, raw: str) -> Dict:
         """校验新 Cookie 身份后原位替换，保留账号 ID、邮箱与任务配置。"""
-        from icloud_hme import ICloudHME
+        from icloud_hme import ICloudHME, ICloudMailServiceUnavailable
         with self._workflow_lock(acc_id):
             account = self.accounts.get(acc_id)
             if not account:
@@ -288,7 +288,12 @@ class AccountManager:
                 raise ValueError('Cookie 所属账号不匹配，未修改原账号')
             from mail_provisioning import MailProvisioner
             client.list_aliases(strict=True)
-            MailProvisioner(client).prepare_rules(validation=validation)
+            try:
+                MailProvisioner(client).prepare_rules(validation=validation)
+            except ICloudMailServiceUnavailable as error:
+                return self.update_account(acc_id, cookies=client.cookies, status='error', last_error=str(error),
+                                           session_requires_login=False,
+                                           session_checked_at=datetime.now().isoformat())
             return self.update_account(acc_id, cookies=client.cookies, status='active', last_error=None,
                                        session_requires_login=False,
                                        last_validated=datetime.now().isoformat())

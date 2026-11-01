@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from creation_jobs import CreationJobs
 from email_catalog import stamp
 from email_delete import EmailDeleteJobs
-from icloud_hme import ICloudSessionExpired
+from icloud_hme import ICloudSessionExpired, ICloudMailServiceUnavailable
 from plus_addressing import safe_error
 from auto_plus import PlusCreationJobs
 
@@ -284,10 +284,10 @@ class RegistrationJobs(CreationJobs):
                         self._log_quota(job_id, account, '执行前')
                         try:
                             self._account(job_id, account, cancel)
-                        except ICloudSessionExpired as error:
+                        except (ICloudSessionExpired, ICloudMailServiceUnavailable) as error:
                             update = getattr(self.manager, 'update_account', None)
                             if update:
-                                update(account, status='error', session_requires_login=True,
+                                update(account, status='error', session_requires_login=isinstance(error, ICloudSessionExpired),
                                        last_error=self._error(error))
                             raise
                         finally:

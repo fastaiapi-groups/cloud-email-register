@@ -29,8 +29,8 @@ def plus_address(base, tag):
 
 
 def safe_error(error):
-    from icloud_hme import ICloudSessionExpired, ICloudMailSessionExpired
-    if isinstance(error, ICloudMailSessionExpired):
+    from icloud_hme import ICloudSessionExpired, ICloudMailSessionExpired, ICloudMailServiceUnavailable
+    if isinstance(error, (ICloudMailSessionExpired, ICloudMailServiceUnavailable)):
         return str(error)
     if isinstance(error, ICloudSessionExpired):
         return 'Apple Cookie 已确认失效，请重新登录并更新 Cookie'

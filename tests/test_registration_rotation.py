@@ -29,7 +29,7 @@ class RotationTest(unittest.TestCase):
             create_aliases_for_account=self.create)
         self.jobs = RegistrationJobs(self.manager)
         self.config = {**AutoRegistration.defaults, 'account_ids':['a'], 'item_interval_seconds':0,
-                       'rotation_threshold':5}
+                       'rotation_threshold':4}
         outer = self
         class Deleter:
             def __init__(self, manager):
@@ -96,16 +96,20 @@ class RotationTest(unittest.TestCase):
         # 所有删除先完成，再进入新建阶段。
         self.assertEqual([action for action,_ in self.calls[:10]],['delete']*10)
 
-    def test_745_rotates_while_744_grows_only_to_threshold(self):
+    def test_495_does_not_rotate_496_cleans_five_oldest_then_creates_five_and_splits(self):
         self.sources(5)
         self.aliases['a'].extend({'email':f'external{i}@icloud.com','createdAt':1000}
-                                 for i in range(740))
-        job = self.run_job({**self.config, 'rotation_threshold': 745})
-        self.assertEqual((job['total_deleted'], job['total_created']), (5, 5))
+                                 for i in range(490))
+        job = self.run_job({**self.config, 'rotation_threshold': 495})
+        self.assertEqual((job['total_deleted'], job['total_created'], job['total_split']), (0, 5, 5))
         self.calls.clear()
-        self.aliases['b'] = [{'email':f'external{i}@icloud.com'} for i in range(744)]
-        job = self.run_job({**self.config, 'rotation_threshold': 745}, ids=['b'])
-        self.assertEqual((job['total_deleted'], job['total_created']), (0, 1))
+        self.sources(5, account='b')
+        self.aliases['b'].extend({'email':f'outside{i}@icloud.com','createdAt':1000}
+                                 for i in range(491))
+        job = self.run_job({**self.config, 'rotation_threshold': 495}, ids=['b'])
+        self.assertEqual((job['total_deleted'], job['total_created'], job['total_split']), (5, 5, 5))
+        self.assertEqual([email for action,email in self.calls if action=='delete' and '+' not in email],
+                         [f'b{i}@icloud.com' for i in range(5)])
 
     def test_750_cap_applies_even_when_rotation_disabled(self):
         self.aliases['a'] = [{'email':f'external{i}@icloud.com'} for i in range(749)]

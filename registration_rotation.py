@@ -189,11 +189,9 @@ class RegistrationJobs(CreationJobs):
         client = self.manager.get_client(account)
         aliases = client.list_aliases(strict=True)
         source_total = len(aliases)
-        if config['rotation_enabled'] and source_total < config['rotation_threshold']:
-            budget = min(budget, config['rotation_threshold'] - source_total)
         deleter = EmailDeleteJobs(self.manager)
         deleter.records, deleter.contexts, deleter.cleanup_inboxes = {}, {}, True
-        if config['rotation_enabled'] and len(aliases) >= config['rotation_threshold']:
+        if config['rotation_enabled'] and len(aliases) > config['rotation_threshold']:
             # 预先核验 Apple 身份和规则权限；Cookie 失效时不先删除分裂地址。
             deleter._context(account)
             selected = self._oldest(account, aliases)[:budget]

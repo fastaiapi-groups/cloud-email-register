@@ -8,7 +8,7 @@ import requests
 from inbox_links import REGISTRY, is_ready, load_links, save_link, update_link
 from public_inbox import publish_inbox_link, load_config
 
-API_BASE = "https://api.fastaiapi.cloud"
+API_BASE = "https://mail-api.fastaiapi.cloud"
 WEBMAIL_BASE = "https://webmail.fastaiapi.cloud/"
 MAIL_DOMAIN = "fastaiapi.cloud"
 MAX_MAIL_RULES = 500

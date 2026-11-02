@@ -31,7 +31,7 @@ function json(value, status = 200) {
 }
 
 export async function readMessages(record, fetcher = fetch) {
-  const response = await fetcher('https://api.fastaiapi.cloud/api/mails?limit=30&offset=0', {
+  const response = await fetcher('https://mail-api.fastaiapi.cloud/api/mails?limit=30&offset=0', {
     headers: {Authorization: 'Bearer ' + record.api_token}, signal: AbortSignal.timeout(20000),
   });
   if (!response.ok) throw new Error('上游收件服务暂不可用（HTTP ' + response.status + '），请稍后刷新');

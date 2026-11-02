@@ -209,7 +209,7 @@ API Key 和会话均采用 256 位随机令牌，不使用可猜测的账号或�
 别名2@icloud.com----https://webmail.fastaiapi.cloud/m/mbx_987654321.另一个邮箱的随机令牌
 ```
 
-当前复用账号已有的 `api.fastaiapi.cloud` 收件服务，收件域为 `fastaiapi.cloud`。`cloud_inbox/` 提供部署到 `webmail.fastaiapi.cloud/m/*` 的专属收件页：直接显示原 iCloud 别名、邮件列表及提取的验证码，每 10 秒自动刷新。每个别名分配独立域名收件箱和独立随机链接；公开页面不显示转发地址，不携带上游 JWT，也不能切换到其他邮箱。
+当前复用账号已有的 `mail-api.fastaiapi.cloud` 收件服务，收件域为 `fastaiapi.cloud`。`cloud_inbox/` 提供部署到 `webmail.fastaiapi.cloud/m/*` 的专属收件页：直接显示原 iCloud 别名、邮件列表及提取的验证码，每 10 秒自动刷新。每个别名分配独立域名收件箱和独立随机链接；公开页面不显示转发地址，不携带上游 JWT，也不能切换到其他邮箱。
 
 本机 `gpt-auto-register` 的「iCloud 隐藏邮箱（中转）」已支持上述原始短链接：直接导入这里导出的 TXT 即可，程序自动读取链接下的 `/api/messages`，无需修改导出文本。同一链接可以在浏览器打开查看邮件。接收端会核对返回邮箱与导入地址一致，并按邮件 ID、时间过滤重复邮件和旧验证码。
 

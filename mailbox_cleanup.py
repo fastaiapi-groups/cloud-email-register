@@ -22,12 +22,12 @@ def delete_domain_inbox(record, storage, http=None):
     http = http or requests.Session()
     headers = {'Authorization': 'Bearer ' + token}
     try:
-        identity = http.get('https://api.fastaiapi.cloud/api/settings', headers=headers,
+        identity = http.get('https://mail-api.fastaiapi.cloud/api/settings', headers=headers,
                             timeout=25, allow_redirects=False)
         # 删除后重试时，旧 JWT 可能仍被服务接受；必须依赖明确的成功响应。
         if identity.status_code != 200 or identity.json().get('address', '').lower() != destination.lower():
             raise RuntimeError('收件箱归属校验失败，未确认删除')
-        response = http.delete('https://api.fastaiapi.cloud/api/delete_address', headers=headers,
+        response = http.delete('https://mail-api.fastaiapi.cloud/api/delete_address', headers=headers,
                                timeout=25, allow_redirects=False)
         if response.status_code != 200 or response.json().get('success') is not True:
             raise RuntimeError('收件箱服务未确认删除，请重试')

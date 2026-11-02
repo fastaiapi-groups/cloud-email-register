@@ -12,6 +12,7 @@ from creation_jobs import CreationJobs
 from email_catalog import stamp
 from email_delete import EmailDeleteJobs
 from icloud_hme import ICloudSessionExpired
+from mail_provisioning import MAX_MAIL_RULES, MailProvisioner
 from plus_addressing import safe_error
 from auto_plus import PlusCreationJobs
 
@@ -121,7 +122,7 @@ class RegistrationJobs(CreationJobs):
                 json.dumps({'account_id': account, 'started_at': now})))
             return key
 
-    def _oldest(self, account, aliases):
+    def _oldest(self, account, aliases, rules=None):
         links = self.storage.load_links()
         local = {row['email'].lower(): row for row in self.storage.emails() if row['account_id'] == account}
         candidates = []
@@ -131,6 +132,10 @@ class RegistrationJobs(CreationJobs):
             if not record or '+' in email.split('@')[0]:
                 continue
             if links.get(email, {}).get('account_id') not in (None, account):
+                continue
+            # 规则容量不足时，只删除确实能释放本项目转发规则的源地址。
+            if rules is not None and not any(MailProvisioner.matching_rule(
+                    rule, email, links.get(email, {}).get('destination', '')) for rule in rules):
                 continue
             created = stamp(alias.get('createdAt')) or stamp(record.get('created_at'))
             if created is not None:
@@ -190,12 +195,20 @@ class RegistrationJobs(CreationJobs):
         aliases = client.list_aliases(strict=True)
         deleter = EmailDeleteJobs(self.manager)
         deleter.records, deleter.contexts, deleter.cleanup_inboxes = {}, {}, True
-        if config['rotation_enabled'] and len(aliases) >= config['rotation_threshold']:
-            # 预先核验 Apple 身份和规则权限；Cookie 失效时不先删除分裂地址。
-            deleter._context(account)
-            selected = self._oldest(account, aliases)[:budget]
+        rules = None
+        rule_rotation_needed = False
+        if config['rotation_enabled']:
+            # 两种容量独立计算；源地址未达阈值时，转发规则也可能已满。
+            # 预先核验 Apple 身份和规则权限，失败时不先删除分裂地址。
+            _, provisioner = deleter._context(account)
+            rules = provisioner.list_rules()
+            rule_rotation_needed = (len(rules) >= config['rotation_threshold']
+                                    or max(0, MAX_MAIL_RULES - len(rules)) < budget)
+        if config['rotation_enabled'] and (len(aliases) >= config['rotation_threshold'] or rule_rotation_needed):
+            selected = self._oldest(account, aliases, rules if rule_rotation_needed else None)[:budget]
             self._event(job_id, account, 'plan', {'ok': True,
-                'message': f'主账号当前有 {len(aliases)} 个隐私地址，选中最老的 {len(selected)} 个源地址及其全部分裂地址进行轮换'})
+                'message': f'主账号当前有 {len(aliases)} 个隐私地址、{len(rules)} 条转发规则，'
+                           f'选中最老的 {len(selected)} 个源地址及其全部分裂地址进行轮换'})
             if not selected:
                 self._event(job_id, account, 'skip', {'ok': False, 'skipped': True,
                     'error': '没有可确认归属和创建时间的源地址，本轮不删除也不创建'})

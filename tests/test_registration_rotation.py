@@ -22,6 +22,7 @@ class RotationTest(unittest.TestCase):
         self.store = Storage(Path(self.tmp.name)/'state.sqlite3')
         self.calls = []
         self.aliases = {}
+        self.rules = {}
         self.accounts = {'a': {}, 'b': {}}
         self.manager = SimpleNamespace(storage=self.store, accounts=self.accounts,
             get_account=lambda key: self.accounts.get(key), _workflow_lock=lambda _:threading.RLock(),
@@ -37,6 +38,8 @@ class RotationTest(unittest.TestCase):
             def _context(self, account):
                 if outer.accounts[account].get('session_requires_login'):
                     raise ICloudSessionExpired('HTTP 421')
+                return outer.manager.get_client(account), SimpleNamespace(
+                    list_rules=lambda: copy.deepcopy(outer.rules.get(account, [])))
             def create_item(self, email, label):
                 outer.calls.append(('delete', email))
                 outcome = outer.failures.get(email, [])
@@ -60,7 +63,11 @@ class RotationTest(unittest.TestCase):
             self.store.add_email(email,account)
             with self.store.connect() as db:
                 db.execute("UPDATE email_records SET created_at='2000-01-01T00:00:00Z' WHERE email=?",(email,))
-            self.store.update_link(email,{'email':email,'account_id':account,'configured':True,'inbox_url':'public'})
+            destination=f'{account}{index}@fastaiapi.cloud'
+            self.store.update_link(email,{'email':email,'account_id':account,'configured':True,
+                                         'inbox_url':'public','destination':destination})
+            self.rules.setdefault(account,[]).append({'prefix':'TO','body':email,
+                                                      'action':'FRWD','target':destination})
             self.aliases.setdefault(account,[]).append({'email':email,'createdAt':1000+index,'active':True})
             child=f'{account}{index}+old@icloud.com'
             self.store.add_email(child,account)
@@ -186,6 +193,37 @@ class RotationTest(unittest.TestCase):
         self.assertEqual(job['total_created'],2)
         self.assertEqual(job['total_split'],4)
         self.assertFalse(any(action=='delete' for action,_ in self.calls))
+
+    def test_full_rules_rotate_owned_oldest_sources_below_alias_threshold(self):
+        self.sources(7)
+        # 最老的 a0 没有本项目可确认的规则，删除它无法释放规则容量。
+        self.rules['a'] = self.rules['a'][1:] + [{} for _ in range(494)]
+        job = self.run_job({**self.config, 'rotation_threshold':495})
+        parents = [email for action,email in self.calls if action=='delete' and '+' not in email]
+        self.assertEqual(parents, [f'a{index}@icloud.com' for index in range(1,6)])
+        self.assertEqual((job['total_deleted'],job['total_created'],job['total_split']), (5,5,5))
+        self.assertIn('a0@icloud.com',self.store.load_links())
+
+    def test_rule_capacity_must_fit_the_whole_next_batch(self):
+        self.sources(7)
+        self.rules['a'] += [{} for _ in range(489)]
+        job = self.run_job({**self.config, 'rotation_threshold':1000})
+        self.assertEqual((job['total_deleted'],job['total_created']), (5,5))
+
+    def test_aliases_and_rules_share_the_configured_rotation_threshold(self):
+        for account, rule_count, deleted in [('a',494,0),('b',495,5)]:
+            with self.subTest(rule_count=rule_count):
+                self.sources(7,account)
+                self.rules[account] += [{} for _ in range(rule_count-7)]
+                job = self.run_job({**self.config, 'rotation_threshold':495}, [account])
+                self.assertEqual((job['total_deleted'],job['total_created']), (deleted,5))
+
+    def test_full_unowned_rules_do_not_delete_sources_or_create_more(self):
+        self.sources(7)
+        self.rules['a'] = [{} for _ in range(500)]
+        job = self.run_job({**self.config, 'rotation_threshold':495})
+        self.assertFalse(self.calls)
+        self.assertEqual((job['total_deleted'],job['total_created'],job['total_skipped']), (0,0,1))
 
     def test_children_include_legacy_deleted_short_links_until_remote_cleanup_confirmed(self):
         self.sources(1)

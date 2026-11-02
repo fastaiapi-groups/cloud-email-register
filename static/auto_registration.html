@@ -9,11 +9,11 @@
 <div class="field-row"><label>每账号每轮创建数量<input id="count" name="count" type="number" min="1" max="20" required value="5"><small>每轮 1–20 个</small></label><label>每个邮箱间隔（秒）<input id="itemInterval" type="number" min="0" max="300" required value="3"><small>上一邮箱处理完成后开始计时</small></label></div>
 <fieldset><legend>容量轮换与分裂</legend>
 <label class="switch"><input id="rotationEnabled" type="checkbox" checked role="switch" aria-label="容量轮换开关"><span></span><b>达到阈值时轮换旧源地址</b></label>
-<div class="field-row"><label>每主账号源地址轮换阈值<input id="rotationThreshold" type="number" min="1" max="10000" value="450" required></label><label>每主账号每轮最多轮换源地址数<input id="rotationCount" type="number" min="1" max="20" value="5" required></label></div>
+<div class="field-row"><label>每主账号源地址与转发规则轮换阈值<input id="rotationThreshold" type="number" min="1" max="10000" value="450" required></label><label>每主账号每轮最多轮换源地址数<input id="rotationCount" type="number" min="1" max="20" value="5" required></label></div>
 <div class="field-row"><label>单个删除失败重试次数<input id="deleteRetries" type="number" min="0" max="3" value="1" required></label><label>每个新源地址分裂数量<input id="splitPerSource" type="number" min="0" max="20" value="1" required></label></div>
 <div class="field-row"><label>每主账号窗口内最多创建源邮箱数<input id="hourlyCreateLimit" type="number" min="1" max="50" value="5" required></label><label>创建额度统计窗口（分钟）<input id="quotaWindowMinutes" type="number" min="1" max="1440" value="60" required></label></div>
 <p class="hint">创建额度可修改：每个主账号独立计算，默认最近 60 分钟最多创建 5 个源邮箱；可在上方修改窗口分钟数及创建上限，保存后从下一轮生效。分裂地址不占创建额度，结果未知的创建尝试保守占额。这是本项目的保护配置，Apple 实际限流仍以接口返回为准。</p>
-<p class="hint">阈值、轮换数量和创建窗口额度均按每个 Apple 主账号独立计算，分裂地址不计入源地址总数。达到阈值时，按创建时间从早到晚选择本项目管理的源地址，先撤销其全部分裂地址的收件链接和记录，再删除源地址、Apple 转发规则、收件箱及短链接。仅为完整清理成功的源地址补建新源，再分别分裂。失败最多按设置重试，单项失败继续其他项；Apple Cookie 失效只跳过所属主账号。本轮数量受创建数量、轮换数量和窗口剩余额度共同限制；窗口额度不足时不先删除旧地址。未达到阈值时正常创建新源并分裂。</p>
+<p class="hint">源地址数量与转发规则数量共用此轮换阈值，任一数量达到阈值，或规则余量不足本轮创建数量时，按创建时间从早到晚轮换本项目管理的源地址；需要释放规则时，仅选择有可确认归属的转发规则的源地址。先撤销其全部分裂地址的收件链接和记录，再删除源地址、Apple 转发规则、收件箱及短链接。仅为完整清理成功的源地址补建新源，再分别分裂。阈值、轮换数量和创建窗口额度均按每个 Apple 主账号独立计算，分裂地址不计入源地址总数。失败最多按设置重试，单项失败继续其他项；Apple Cookie 失效只跳过所属主账号。本轮数量受创建数量、轮换数量和窗口剩余额度共同限制；窗口额度不足时不先删除旧地址。两项数量均未达到阈值且规则余量充足时，正常创建新源并分裂。</p>
 </fieldset>
 <label class="switch"><input id="syncToFastai" type="checkbox" role="switch" aria-label="注册完成后自动发送 FastAI"><span></span><b>注册完成后自动发送 FastAI</b></label><small>默认关闭，保存后从下一轮生效。整轮结束后，发送成功创建且收件配置完成的新源邮箱及分裂邮箱，已发送成功的地址自动跳过。使用“发送账号”的接口和 Token，忙时排队，发送结果记录在注册日志；失败可在邮箱列表重试。</small>
 <label>每轮间隔方式<select id="mode"><option value="random">随机范围</option><option value="fixed">固定间隔</option></select></label>

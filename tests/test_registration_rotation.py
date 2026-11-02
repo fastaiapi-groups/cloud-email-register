@@ -137,7 +137,8 @@ class RotationTest(unittest.TestCase):
     def test_quota_release_uses_later_creation_time_and_is_per_account(self):
         from datetime import datetime, timezone
         self.jobs.config = {**self.config, 'hourly_create_limit': 2, 'quota_window_minutes': 10}
-        now = time.time()
+        # 整秒基准可精确往返 ISO 时间，避免微秒舍入使窗口边界断言偶发失败。
+        now = int(time.time())
         self.store.add_email('new@icloud.com', 'a')
         self.store.add_email('new+child@icloud.com', 'a')
         self.store.add_email('other@icloud.com', 'b')

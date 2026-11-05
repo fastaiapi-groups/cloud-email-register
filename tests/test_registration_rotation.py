@@ -6,13 +6,13 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from storage import Storage
 from registration_rotation import RegistrationJobs
 from registration_policy import ROTATION_DEFAULTS
 from auto_registration import AutoRegistration
-from icloud_hme import ICloudSessionExpired
+from icloud_hme import ICloudHME, ICloudSessionExpired, ICloudCreationLimitError
 
 
 class RotationTest(unittest.TestCase):
@@ -140,6 +140,82 @@ class RotationTest(unittest.TestCase):
         self.assertEqual(attempts,5)
         self.assertEqual(job['total_created'],4)
         self.assertEqual(job['total_errors'],5)
+
+    def test_apple_creation_limit_stops_retries_and_keeps_error_code(self):
+        for description in ('Error Description not available', 'Please try again later'):
+            with self.subTest(description=description):
+                client = ICloudHME({}, verbose=False)
+                client._service_url = 'https://example.icloud.com'
+                client.generate = Mock(return_value='candidate@icloud.com')
+                client._request = Mock(return_value={'success': False, 'error': {
+                    'errorCode': '-41015', 'errorMessage': description, 'retryAfter': 2}})
+                with self.assertRaisesRegex(ICloudCreationLimitError, '-41015'):
+                    client.create_alias(max_retries=5)
+                self.assertEqual(client.generate.call_count, 1)
+                self.assertEqual(client._request.call_count, 1)
+        client._request.return_value['error']['errorCode'] = '-41007'
+        with self.assertRaisesRegex(RuntimeError, '-41007'):
+            client.reserve('candidate@icloud.com')
+
+    def test_creation_limit_persists_across_reload_and_clears_only_after_success(self):
+        import account_manager as module
+        root = Path(self.tmp.name)
+        with patch.multiple(module, ACCOUNTS_FILE=root / 'accounts.json',
+                            RESULTS_DIR=root, LATEST_EMAILS=root / 'latest.txt'):
+            manager = module.AccountManager()
+            manager.accounts = {'a': {'id': 'a', 'name': 'test', 'cookies': {}, 'status': 'active'}}
+            manager._save()
+            client = Mock()
+            client.create_alias.side_effect = ICloudCreationLimitError()
+            with patch.object(manager, 'get_client', return_value=client), \
+                    patch('mail_provisioning.MailProvisioner') as factory:
+                result = manager.create_aliases_for_account('a', count=5)[0]
+            self.assertTrue(result['creation_limited'])
+            self.assertEqual(client.create_alias.call_count, 1)
+            reloaded = module.AccountManager()
+            with patch.object(reloaded, 'get_client') as get_client:
+                result = reloaded.create_aliases_for_account('a')[0]
+                self.assertTrue(result['creation_limited'])
+                get_client.assert_not_called()
+            self.assertEqual(reloaded.accounts['a']['status'], 'active')
+            client.create_alias.side_effect = None
+            client.create_alias.return_value = {'email': 'new@icloud.com'}
+            with patch('account_manager.time.time', return_value=result['retry_at'] + 1), \
+                    patch.object(reloaded, 'get_client', return_value=client), \
+                    patch('mail_provisioning.MailProvisioner') as factory:
+                factory.return_value.provision.return_value = {'inbox_url': 'https://example.com/inbox'}
+                self.assertTrue(reloaded.create_aliases_for_account('a')[0]['ok'])
+            self.assertEqual(reloaded.storage.read_document('hme_creation_limit', 'a'), {})
+
+    def test_creation_limit_stops_account_batch_but_other_account_continues(self):
+        self.sources(1, account='a')
+        self.sources(1, account='b')
+        original = self.manager.create_aliases_for_account
+        create = Mock(side_effect=lambda account, *args: (
+            [{'ok': False, 'creation_limited': True, 'error': 'Apple -41015'}]
+            if account == 'a' else original(account, *args)))
+        self.manager.create_aliases_for_account = create
+        job = self.run_job(ids=['a', 'b'])
+        self.assertEqual(sum(call.args[0] == 'a' for call in create.call_args_list), 1)
+        self.assertEqual((job['total_created'], job['total_errors']), (5, 1))
+
+    def test_creation_limit_cooldown_skips_before_deleting_or_spending_quota(self):
+        self.sources()
+        self.store.write_document('hme_creation_limit', {
+            'error_code': '-41015', 'error': 'Apple -41015', 'retry_at': time.time() + 3600}, 'a')
+        job = self.run_job()
+        self.assertEqual(self.calls, [])
+        self.assertEqual(job['total_skipped'], 1)
+        self.assertEqual(self.jobs.quota_status('a')['used'], 0)
+
+    def test_expired_cooldown_does_not_allow_deletion_before_creation_recovers(self):
+        self.sources()
+        self.store.write_document('hme_creation_limit', {
+            'error_code': '-41015', 'error': 'Apple -41015', 'retry_at': time.time() - 1}, 'a')
+        job = self.run_job()
+        self.assertEqual(self.calls, [])
+        self.assertEqual(job['total_skipped'], 1)
+        self.assertEqual(len(self.store.emails()), 10)
 
     def test_quota_release_uses_later_creation_time_and_is_per_account(self):
         from datetime import datetime, timezone

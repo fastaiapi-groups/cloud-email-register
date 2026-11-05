@@ -489,6 +489,7 @@ class AccountManager:
     def create_aliases_for_account(
         self, acc_id: str, count: int = 1, label: str = ""
     ) -> List[Dict]:
+        from icloud_hme import ICloudCreationLimitError
         from mail_provisioning import MailProvisioner
         if not isinstance(count, int) or not 1 <= count <= 50:
             raise ValueError("创建数量必须为 1 到 50")
@@ -496,6 +497,11 @@ class AccountManager:
         if not account:
             raise KeyError(f"账号不存在: {acc_id}")
         with self._workflow_lock(acc_id):
+            limit = self.storage.read_document('hme_creation_limit', acc_id) or {}
+            if limit.get('retry_at', 0) > time.time():
+                return [{'email': None, 'account_id': acc_id, 'ok': False,
+                         'alias_created': False, 'creation_limited': True,
+                         'retry_at': limit['retry_at'], 'error': limit['error']}]
             client = self.get_client(acc_id, verbose=False)
             provisioner = MailProvisioner(client)
             provisioner.prepare()
@@ -516,13 +522,23 @@ class AccountManager:
                         account["alias_total"] = account.get("alias_total", 0) + 1
                         account["alias_active"] = account.get("alias_active", 0) + 1
                         self._save()
+                    if limit:
+                        self.storage.write_document('hme_creation_limit', {}, acc_id)
+                        limit = {}
                     record = provisioner.provision(email, acc_id)
                     results.append({"email": email, "account_id": acc_id, "ok": True,
                                     "alias_created": True, "inbox_url": record["inbox_url"],
                                     "line": email + "----" + record["inbox_url"]})
                 except Exception as error:
-                    results.append({"email": email, "account_id": acc_id, "ok": False,
-                                    "alias_created": bool(email), "error": str(error)[:250]})
+                    result = {"email": email, "account_id": acc_id, "ok": False,
+                              "alias_created": bool(email), "error": str(error)[:250]}
+                    if isinstance(error, ICloudCreationLimitError):
+                        # Local one-hour backoff, not an Apple recovery deadline.
+                        limit = {'error_code': '-41015', 'error': str(error),
+                                 'retry_at': time.time() + 3600}
+                        self.storage.write_document('hme_creation_limit', limit, acc_id)
+                        result.update(creation_limited=True, retry_at=limit['retry_at'])
+                    results.append(result)
                     # Stop on a partial setup failure so a batch cannot leave many orphan aliases.
                     break
             return results

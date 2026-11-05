@@ -186,6 +186,12 @@ class RegistrationJobs(CreationJobs):
         if self._expired(account):
             self._event(job_id, account, 'skip', {'ok': False, 'skipped': True, 'error': '主账号 Cookie 已失效，跳过本轮'})
             return
+        limit = self.storage.read_document('hme_creation_limit', account) or {}
+        if limit.get('retry_at', 0) > time.time():
+            self._event(job_id, account, 'skip', {'ok': False, 'skipped': True,
+                'creation_limited': True, 'retry_at': limit['retry_at'],
+                'error': limit['error'] + '；本地冷却期间不删除也不创建'})
+            return
         # 检查额度在删除之前，避免本小时已无创建额度却仍清理旧地址。
         budget = min(config['count'], self._reserve_quota(account))
         if not budget:
@@ -205,6 +211,11 @@ class RegistrationJobs(CreationJobs):
             rule_rotation_needed = (len(rules) >= config['rotation_threshold']
                                     or max(0, MAX_MAIL_RULES - len(rules)) < budget)
         if config['rotation_enabled'] and (len(aliases) >= config['rotation_threshold'] or rule_rotation_needed):
+            if limit.get('error_code') == '-41015':
+                self._event(job_id, account, 'skip', {'ok': False, 'skipped': True,
+                    'creation_limited': True,
+                    'error': 'Apple 创建限制尚未确认解除，已保留旧邮箱；有空余容量时成功创建源地址后再恢复轮换'})
+                return
             selected = self._oldest(account, aliases, rules if rule_rotation_needed else None)[:budget]
             self._event(job_id, account, 'plan', {'ok': True,
                 'message': f'主账号当前有 {len(aliases)} 个隐私地址、{len(rules)} 条转发规则，'
@@ -263,6 +274,8 @@ class RegistrationJobs(CreationJobs):
             self._event(job_id, account, 'create_source', {**result,
                 'message': result.get('email', '') + ' 新源地址及收件配置完成' if result.get('ok') else None})
             if result.get('session_expired') or self._expired(account):
+                return
+            if result.get('creation_limited'):
                 return
             if not result.get('ok'):
                 continue

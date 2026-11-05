@@ -222,6 +222,14 @@ class ICloudSessionExpired(RuntimeError):
     """Apple 已拒绝会话；保活不能替代重新登录及双重认证。"""
 
 
+class ICloudCreationLimitError(RuntimeError):
+    """Apple 暂时禁止创建；删除已有地址不代表此限制会解除。"""
+
+    def __init__(self):
+        super().__init__('Apple 暂时限制本账号创建隐藏邮箱（错误码 -41015），请稍后再试；'
+                         '此限制不代表 Cookie 失效或已有地址数量已满')
+
+
 class ICloudHME:
     """iCloud Hide My Email 客户端"""
 
@@ -407,7 +415,13 @@ class ICloudHME:
         response = self._request("POST", f"{self._service_url}/v1/hme/reserve", json_data=data, max_attempts=2)
         if not response.get("success"):
             err = response.get("error", {})
-            raise RuntimeError(f"保留失败: {err.get('errorMessage', 'unknown')}")
+            code = str(err.get('errorCode', ''))
+            if code == '-41015':
+                raise ICloudCreationLimitError()
+            detail = err.get('errorMessage', 'unknown')
+            if re.fullmatch(r'-?\d+', code):
+                detail = f'{detail}（Apple 错误码 {code}）'
+            raise RuntimeError(f"保留失败: {detail}")
         result = response.get("result", {}).get("hme", {})
         alias = result.get("hme", hme) if isinstance(result, dict) else hme
         self._log(f"已保留: {alias}")
@@ -433,6 +447,8 @@ class ICloudHME:
             try:
                 email = self.reserve(hme, label)
                 return {"email": email, "label": label or "", "created_at": datetime.now().isoformat()}
+            except ICloudCreationLimitError:
+                raise
             except Exception as e:
                 last_err = str(e)
                 self._log(f"reserve 失败: {last_err}")
